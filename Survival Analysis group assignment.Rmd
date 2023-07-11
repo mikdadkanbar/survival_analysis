@@ -1,0 +1,298 @@
+---
+title: "SA_group_assignment"
+author: "Niels van der Drift"
+date: "2023-04-30"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(warning = FALSE, message = FALSE) 
+
+library(survival)
+library(GGally)
+library(ggplot2)
+library(kableExtra)
+library ( tab)
+
+unos_data = read.table("UNOS.txt", header = T)
+#head(unos_data)
+#str(unos_data)
+```
+
+# Exercise 1: Data Inspection
+
+We will investigate a table with summary statistics and make some plots:
+
+```{r Summary Statistics, echo = F}
+kable(summary(unos_data),"latex", booktabs = T) %>%
+kable_styling(font_size = 6, latex_options = "HOLD_position", "scale_down")
+```
+
+```{r, echo = F}
+# Create density plots using ggplot2
+ggplot(data = unos_data) +
+  geom_density(aes(x = age.1), fill = "blue", alpha = 0.5) +
+  labs(title = "Density Plot of Recipient Age",
+       x = "Recipient Age (years)",
+       y = "Density")
+
+ggplot(data = unos_data) +
+  geom_density(aes(x = age), fill = "purple", alpha = 0.5) +
+  labs(title = "Density Plot of DonorAge",
+       x = "Donor Age (years)",
+       y = "Density")
+
+ggplot(data = unos_data) +
+  geom_density(aes(x = hlamat), fill = "green", alpha = 0.5) +
+  labs(title = "Density Plot of HLAMatchScore",
+       x = "HLAMatchScore",
+       y = "Density")
+
+ggplot(data = unos_data) +
+  geom_density(aes(x = cold_isc), fill = "red", alpha = 0.5) +
+  labs(title = "Density Plot of ColdIschemiaTime",
+       x = "Time kidney spends between donor and transplant body (hours)",
+       y = "Density")
+
+
+
+```
+We observe that the recipient age is most frequent between ages 10 and 18, while the donor age is mostly populated between 18 and 45 years old.
+HLAMatch Score has mode 3 and is right skewed, most of the patients have a HLAMatch of 3 or lower.
+ColdIschemiaTime is right skewed, most of its mass lies between 0 and 5 hours, this is expected as it makes sense minimize the time a kidney spends outside of the donor and recipient body.
+
+# Exercise 2: Plot Overall Kaplan-Meier
+
+Next, we will plot a Kaplan-Meier curve for overall survival during the first 12 years after transplantation.
+
+```{r, echo = F}
+# Setting the follow-up time variable (in years)
+fu_time <- unos_data$fu
+
+# Creating a survival object
+surv_obj <- with(unos_data, Surv(fu_time, death))
+
+# Plotting the Kaplan-Meier overall survival curve
+plot(survfit(surv_obj ~ 1), xlim = c(0, 12), xlab = "Time (years)", ylab = "Overall Survival Probability")
+```
+We observe good survival rates for the kidney transplants. Roughly 90% is still alive after 12 years.
+
+# Exercise 3: Compare Mortality Rates
+
+Next, we are going to compare mortality rates (hazard functions) between children whose transplanted kidney was provided by a living donor and those whose source was recently deceased, as is specified by the dummy variable *txtype*. The information will be provided in the following Kaplan-Meier tables.
+
+```{r Life Table, echo = F}
+data = unos_data
+
+kmTable.fun = function(data){
+  km = survfit(Surv(fu, event = death) ~ 1, data = data)
+  kmTable = data.frame(Time = km$time,
+                       Occurrences = km$n.event,
+                       "People at Risk" = km$n.risk,
+                       Hazard = km$n.event/km$n.risk,
+                       "1-Hazard" = 1-km$n.event/km$n.risk)
+  kmTable$Survival = numeric(nrow(kmTable))
+  kmTable$Survival[1] = kmTable$X1.Hazard[1]
+  for (i in 2:nrow(kmTable)){
+    kmTable$Survival[i] = kmTable$Survival[i-1] * kmTable$X1.Hazard[i]
+  }
+  colnames(kmTable) = c("Time", "Occurrences", "People at Risk", "Hazard", "1 - Hazard", "Survival")
+  kmTable$Mortality = 1 - kmTable$Survival
+  kmTable$cumHaz = numeric(nrow(kmTable))
+  #kmTable$cumHaz[1] = kmTable$Hazard[1]
+  for (i in 1:nrow(kmTable)){
+    kmTable$cumHaz[i] = sum(kmTable$Hazard[1:i])
+  }
+  timePoints = c(1, max(which(kmTable$Time<=1/3)), max(which(kmTable$Time<=2/3)),
+                 max(which(kmTable$Time<=1)), max(which(kmTable$Time<=2)),
+                 max(which(kmTable$Time<=3)), max(which(kmTable$Time<=4)),
+                 max(which(kmTable$Time<=5)))
+  kmTable[timePoints,]
+  #kmTable
+  #plot(Survival ~ Time, data = kmTable, type = "l", ylim = c(0,1))
+  #plot(survfit(surv ~ 1), conf.int = F)
+}
+#kmTable.fun(data)
+kmT0 = kmTable.fun(data[data$txtype == 0,])
+
+kmT1 = kmTable.fun(data[data$txtype == 1,])
+
+
+
+kable(kmT0,"latex", booktabs = T) %>%
+kable_styling(font_size = 7, latex_options = "HOLD_position")
+
+kable(kmT1,"latex", booktabs = T) %>%
+kable_styling(font_size = 7, latex_options = "HOLD_position")
+```
+
+We can observe that the survival rate of patients with a living donor is constantly lower, than that of patients with a dead donor. We can also see that the disparity becomes slightly larger over time, which is also visualised in the following plot of the ratio between the two mortality rates.
+
+```{r Hazard Ratio, echo = F}
+hazRat = data.frame(Time = kmT0$Time, "Hazard Ratio" =kmT0$Mortality/kmT1$Mortality)
+#hazRat = data.frame(Time = kmT0$Time, "Hazard Ratio" =kmT0$cumHaz/kmT1$cumHaz)
+plot(Hazard.Ratio ~ Time, data = hazRat, type = "l", ylim = c(0, 1), xlab = "Time (years)")
+```
+
+As we can see, the ratio is constantly at around 45% - 50%. This suggests that the risk of death is about twice as high if the donor is still alive.
+This tendency will become more prevalent during the following tests. It does seem a bit counter-intuitive to us, as one would think that a kidney from a live donor is better.
+
+# Exercise 4: Plot Kaplan-Meier curves for both donor types
+
+Now, we will present a plot with Kaplan-Meier survival curves for the two donor types.
+
+```{r KM curves, echo = F}
+fit = survfit(Surv(fu, death)~ txtype, data = unos_data)
+plot(fit, col=2:3,lwd=2,mark.time=FALSE,xlim = c(0, 5), xlab="Years post transplant", ylab="Survival Probability")
+legend("bottomleft",c("Living Donor","Deceased Donor"),lwd=2,col=3:2,bty="n")
+```
+
+From this, we may gather similar information as from the table and the hazard ratio plot; Living donor patients tend to survive less.
+
+# Exercise 5: Fit Cox model with donor type as predictor
+
+To formally investigate the difference between donor types, we will make a Cox proportional hazards regression, dependent on donor type.
+
+```{r txtype model Summary, echo = F}
+# Fitting a univariate Cox model with predictor donor type
+txtype_model <- coxph(Surv(fu, death) ~ txtype, data = unos_data)
+#summary(txtype_model)
+#kable(summary(txtype_model),"latex", booktabs = T) %>%
+#kable_styling(font_size = 7, latex_options = "HOLD_position")
+tabcoxph (txtype_model) 
+```
+
+The exp(coef) value of 1.90539 represents the hazard ratio for deceased donor kidney recipients compared to living donor kidney recipients. This means that the hazard of mortality is 1.91 times higher for living donor kidney recipients compared to deceased donor kidney recipients.
+
+The confidence interval for the hazard ratio is between 1.58 and 2.298, indicating that we can be 95% confident that the true hazard ratio lies within this range.
+
+# Exercise 6: Fit a Cox model with age as predictor and estimate the hazard ratio and its confidence interval
+
+Research shows that an important determinant of mortality after kidney transplant is the age of the recipient. Fit a Cox model with age as predictor and estimate the hazard ratio and its confidence interval. First, we will consider age as a continuous variable, and thereafter divide it into categories.
+
+```{r categorical age model, echo = F}
+unos_data = na.omit(unos_data)
+unos_data$agecat = as.factor(ifelse(unos_data$age > median(unos_data$age, na.rm = T), 1, 0))
+levels(unos_data$agecat) = c("Younger", "Older")
+hist(unos_data$age)
+
+# Fit a Cox model with age as a continuous variable
+age_model <- coxph(Surv(fu, death) ~ age.1, data = unos_data)
+
+# View the results
+#summary(age_model)
+tabcoxph (age_model) 
+# Create age categories
+age_cat <- cut(unos_data$age.1, breaks = c(0, quantile(unos_data$age.1, 1/3), quantile(unos_data$age.1, 2/3), Inf))
+
+# Fit a Cox model with age categories
+age_cat_model <- coxph(Surv(fu, death) ~ age_cat, data = unos_data)
+
+# View the results
+#summary(age_cat_model)
+tabcoxph (age_cat_model) 
+```
+
+* Hazard Ratio for continuous age: 0.9785
+
+* CI: (0.9719, 0.9852)
+
+* Hazard Ratio's for age categories:
++ 10-15: 0.8750 CI(0.411, 0.979)
++ 12-18: 0.3525 CI(0.22)
++ 18-30: 0.3385
++ 30+: 0.3309
+
+```{r}
+contCatAge = data.frame(Covariate = c("Continuous Age", "Age 10-15", "Age 15+"), HR = c(0.9785, 0.875, 0.8964), lb = c(0.9719, 0.6789, 0.6944), ub = c(0.9852, 1.128, 1.157))
+
+colnames(contCatAge) = c("Covariate", "Hazard Ratio", "95% lower bound", "95% upper bound")
+
+kable(contCatAge,"latex", booktabs = T) %>%
+kable_styling(font_size = 7, latex_options = "HOLD_position")
+```
+
+
+
+We can observe that the bounds for continuous age are very narrow, making the estimate very precise.
+For categorical age on the other hand, this is not at all the case. The bounds are quite similar and have a lot of spread. 1 is also within the bounds, implying that the coefficients are insignificant. It is thus better to stick with age as a continuous variable.
+
+
+# Exercise 7: Fit a multivariate Cox model by using other predictors and describe your results.
+
+We will start off by making a full model of all relevant variables, including an interaction term between donor and patient age.
+
+```{r Model b1, echo = F}
+unos_data = read.table("UNOS.txt", header = T)
+#backward : 
+b1 <- coxph(Surv(fu, death) ~  cold_isc+sex+txtype+hlamat + age.1*age, 
+            data = unos_data, method = "breslow")
+
+#summary(b1)
+tabcoxph (b1) 
+```
+
+We can see that all coefficients besides age are insignificant. We will start reducing the model by removing the most insignicant coefficient - cold_isc.
+
+```{r model b2, echo = F}
+#drop the least sig one (cold_isc )
+b2 <- coxph(Surv(fu, death) ~   sex+txtype+hlamat+age.1*age, 
+            data = unos_data, method = "breslow")
+#summary(b2)
+tabcoxph (b2) 
+
+```
+
+Having dropped cold_isc, we can see that more covariates have become significant. Nevertheles, sex is still insignificant so we will remove this too.
+
+```{r model b3, echo = F}
+#drop sex : 
+b3 <- coxph(Surv(fu, death) ~  txtype+hlamat+age.1*age, 
+            data = unos_data, method = "breslow")
+
+#summary(b3)
+tabcoxph (b3) 
+
+```
+We now have a nice condensed model with only significant coefficients.
+As was already previously conveyed, having a living donor raises the hazard rate by ~50% (we are still unsure if this might be due to a variable coding mistake). The negative coefficient of hlamat implies that having a better donor-patient match reduces the hazard rate. This makes intuitive sense. Both age and donor age have an exponential coefficient below one, stating that being older and having an older donor is beneficial. This should however be considered in conjunction with the interaction, which does have a hazard increasing coefficient. The interaction aims to uncover a non-linear effect that becomes particularly prevalent when either, or especially both, donor and patient are very old. In most extreme cases, this could also highlight that a big disparity between patient and donor age becomes a risk as well. We also attempted to model this property directly by accounting for the absolute difference between patient and donor age, but this did not yield significant results. It should be noted that the coefficient is much small than the normal age coefficients as the multiplicative property of the interaction can easily lead to values in the hundreds.
+
+# Exercise 8: Estimate the survival function for specific covariate patterns
+
+Based on the previous results, we have chosen the final model to use *txtype, hlamat, age.1, age, age.1:age*. Using this model, we will now evaluate the survival rate of some exemplary cases. Specifically, we will investigate the extreme cases of donor matching [0, 6] for both living donors and dead donors.
+Preemptively, we would expect that people with a better match [6] have a higher survival rate. As previously discovered, a living donor increases the risk of death. We expect to observe the same pattern here. To simulate these patients, the median ages for patient age [13], and for donor age [33] were used.
+
+```{r Covariate Pattern Plot, echo = F}
+newData = expand.grid(txtype = c(0, 1), hlamat = c(0, 6) , age.1 = median(data$age.1, na.rm = T), age = median(data$age, na.rm = T))
+plot(survfit(b3, newdata = newData), col = rep(c(2, 3), each = 2), lwd = 2, lty = rep(c(1, 2), 2), xlab="Years post transplant", ylab="Survival Probability")
+legend("bottomleft", legend = c("HLAMAT = 0", "HLAMAT = 6"), fill = c(2, 3))
+legend("bottomright", legend = c("TXTYPE = 0", "TXTYPE = 1"), lty = c(1, 2), col = 1)
+```
+
+Indeed, we can see that a better match leads to a higher survival rate. Even if a patient has a living donor, having a perfect match still leads to a higher rate of survival than having a dead donor but a terrible match.
+
+# Exercise 9: Check the proportional hazards assumption. 
+
+Using our model, we will now investigate the proportional hazard assumption.
+
+```{r zph test, echo = F}
+# Check the proportional hazards assumption using cox.zph()
+b3_zph = cox.zph(b3)
+
+b3_zph
+#kable(b3_zph,"latex", booktabs = T) %>%
+#kable_styling(font_size = 7, latex_options = "HOLD_position")
+```
+
+As we can see, all tests except for txtype are significant. The global test is also significant. This means that we cannot assume that the hazards of different subgroups behave in a parallel manner. Some solutions for this may include adding time-dependent covariates (we unfortunately have none), stratifying (this might be a bit challenging for our continuous age variables, but could be interesting for hlamat), or using a different type of model all together, such as an accelerated failure time model.
+
+# Exercise 10: Plot the Schoenfeld residuals and comment.
+
+```{r Schoenfeld, echo = F}
+plot(b3_zph)
+```
+
+It should be noted that time is presented on a logistic scale.
+All plots show a similar non-linear trend. This is particularly apparent during the first year. One conclusion we may draw from this, is that there is a systematic component which is latent to our model. We can see that in earlier years, there are quite a lot of occurrences, which makes the confidence bands rather tight. This makes the absence of proportionality especially significant and gives more power to our conclusions.
+
+In summary, our model is very significant overall which suggests that the selected covariates explain variability in the survival data well. Nevertheless, we can notice a non-linear trend in the residuals which may suggest that some components are missing. Seeing as our data mostly covers rather superficial information about the patients, it could likely be that more specific medical information could be of use. Especially as the trends we observe are non-proportional over time, adding time-dependent information could greatly alleviate our issues and thereby improve both the ability of our model to predict, as well as the causal conclusions we may draw.
